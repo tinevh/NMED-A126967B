@@ -1,0 +1,622 @@
+---
+title: "Denosumab trial: secondary radiographic objective: erosive progression"
+output: 
+  word_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE, comment="", fig.width=9, fig.height=6)
+```
+
+```{r }
+#libraries
+library(knitr)
+library(readxl)
+```
+
+# Data
+
+Dataset: "AnalysisDataset_Primary_secondary.xlsx"
+Sheet: "Secondary_erosive_joints"
+
+
+```{r }
+library(knitr)
+library(readxl)
+library(tidyverse)
+```
+
+## Dataset wide format   
+
+First 10 rows of the dataset for week 24:
+
+```{r }
+AD_sec <- read_excel("Data/AnalysisDataset_Primary_secondary.xlsx", sheet="Secondary_erosive_joints")
+
+
+#Placebo as reference level
+AD_sec$TREATMENT <- as.factor(AD_sec$TREATMENT)
+AD_sec$TREATMENT <- relevel (AD_sec$TREATMENT , ref="Placebo")
+
+#numbers as numeric variables
+AD_sec <- AD_sec %>% mutate(across(N_Possible_Progressor:N_New_JE_W48W96, as.numeric))
+
+```
+
+
+```{r}  
+
+AD_sec$N_Not_New_JE_W24 <- AD_sec$N_Possible_Progressor -AD_sec$N_New_JE_W24
+
+AD_sec [c(1:10), c("ID","TREATMENT", "N_New_JE_W24", "N_Possible_Progressor")] 
+```
+
+
+# Method   
+
+The secondary radiographic objective is to evaluate a reduction in radiographic erosive progression as defined by diminishing the appearance of new erosive IP finger joints from baseline to week 24 and from baseline to week 48.
+
+
+Two analyses are reported:
+- Explorative analysis: A grouped binomial logistic regression was applied, based on the wide dataset at patient level.    
+- Analysis according to SAP: A GEE logistic regression was applied. Odds ratios (OR), 95% confidence interval (95% C.I.) and p-value were be calculated by GEE model by time point with treatment, to assess the odds for difference in new erosive progression from baseline between Denosumab treated group and Placebo group at week 24 and 48.  
+
+ 
+
+# Baseline - week 24  
+
+```{r}
+analysis_subset_W24 <- AD_sec[!is.na (AD_sec$N_New_JE_W24) & !is.na(AD_sec$N_Possible_Progressor),]
+```
+
+```{r}
+#creating the complete dataset for week 24:
+
+nsubjects_P <- length(unique(analysis_subset_W24$ID[analysis_subset_W24$TREATMENT=="Placebo"]))
+nsubjects_D <- length(unique(analysis_subset_W24$ID[analysis_subset_W24$TREATMENT=="Denosumab"]))
+njoints_P <- sum(analysis_subset_W24$N_Possible_Progressor[analysis_subset_W24$TREATMENT=="Placebo"])
+njoints_D <- sum(analysis_subset_W24$N_Possible_Progressor[analysis_subset_W24$TREATMENT=="Denosumab"])
+```
+
+The number of different subjects in this dataset is `r nsubjects_P+nsubjects_D` (`r nsubjects_P` in the Placebo group and `r nsubjects_D` in the Denosumab group)
+
+The number of joints (possible progressors) in this dataset is  `r njoints_P` in the Placebo group and `r njoints_D` in the Denosumab group.
+
+## Visualization proportion by patient
+
+Visual presentation of proportions of new erosive joints by patient:  
+
+
+
+```{r}
+
+analysis_subset_W24 <- analysis_subset_W24 %>% mutate(propW24 = N_New_JE_W24 /N_Possible_Progressor)
+library(ggplot2)
+ggplot(analysis_subset_W24, aes(x=TREATMENT, y=propW24)) +geom_violin()+geom_point()
+  
+```
+
+
+
+
+
+
+
+## Grouped binomial logistic regression analysis  
+
+As a first analysis, a grouped binomial logistic regression analysis was applied based on the number of new erosive joints at week 24 by patient and the number of possible progressors by patient.  
+This analysis is based on the complete case dataset for week 24.
+
+
+
+```{r}
+#calculating variable N_Not_New_JE_W24 as N_Possible_Progressor - N_New_JE_W24
+analysis_subset_W24$N_Not_New_JE_W24 <- analysis_subset_W24$N_Possible_Progressor - analysis_subset_W24$N_New_JE_W24
+
+# fit GEE binomial
+logreg <- glm(formula = cbind (N_New_JE_W24,N_Not_New_JE_W24 ) ~ TREATMENT, data=analysis_subset_W24, family=binomial)
+
+res <- data.frame(summary(logreg)$coefficients)
+res$LL <- res$Estimate - 1.96*res[,2]
+res$UL <- res$Estimate + 1.96*res[,2]
+res<-(round(res))
+b <-round (summary(logreg)$coefficients, 4)
+
+
+ORs <- cbind(exp(res[, c(1,5,6)]), data.frame(summary(logreg)$coefficients[,4]))
+colnames (ORs) <- c("Estimated_OR_W24", "95% CI LL",  "95% CI UL", "p.value")
+kable(round(ORs,3))
+```
+
+From baseline to week 24, the estimated odds ratio for erosive progression is  `r ORs  [2,1]` (95% CI: `r ORs [2,2]` to `r ORs [2,3]`) for Denosumab compared to Placebo.  
+
+Estimated proportions of new erosive joints with 95% confidence intervals:    
+
+```{r}
+library(emmeans)
+dfW24 <- as.data.frame(emmeans(logreg, specs= ~TREATMENT, type = "response"))
+kable (dfW24[ ,c("TREATMENT","prob", "asymp.LCL","asymp.UCL")], digits=4)
+dfW24$Time <- "Week 24"
+```
+
+## GEE logistic regression analysis week 24 (SAP)
+
+
+The data was restructured to long format. Example for week 24 for ID 1 and 3:  
+
+```{r}
+# putting the data in the long format
+analysis_subset_W24_1 <-analysis_subset_W24[analysis_subset_W24$N_New_JE_W24!=0, c("ID", "N_New_JE_W24", "TREATMENT")]
+analysis_subset_W24_1$New_JE_W24_dich <- 1
+analysis_subset_W24_1$Freq <- analysis_subset_W24_1$N_New_JE_W24
+
+
+analysis_subset_W24_0 <-analysis_subset_W24[analysis_subset_W24$N_Not_New_JE_W24!=0, c("ID", "N_Not_New_JE_W24", "TREATMENT")]
+analysis_subset_W24_0$New_JE_W24_dich<- 0
+analysis_subset_W24_0$Freq <- analysis_subset_W24_0$N_Not_New_JE_W24
+
+library(tidyverse)
+analysis_subset_W24_2 <- bind_rows(analysis_subset_W24_0 ,analysis_subset_W24_1 )
+analysis_subset_W24_2 <- analysis_subset_W24_2 %>% arrange (ID)
+analysis_subset_long_w24 <- analysis_subset_W24_2 %>%
+  rowwise() %>%
+  mutate(Freq = paste(seq(1, Freq), collapse = ",")) %>%
+  ungroup() %>%
+  separate_rows(Freq) %>%
+  select(ID, TREATMENT, New_JE_W24_dich)%>%
+  mutate(ID =as.factor(ID))
+
+kable(analysis_subset_long_w24 [analysis_subset_long_w24$ID %in% c(1,3),])
+```
+
+
+```{r}
+
+
+
+library(geepack)
+gee24 <- geeglm(formula= New_JE_W24_dich ~ TREATMENT, id=ID, data=analysis_subset_long_w24, family="binomial", corstr="exchangeable")
+
+resgee24 <- data.frame(summary(gee24)$coefficients)
+kable(resgee24, digits=4)
+resgee24$LL <- resgee24$Estimate - 2*resgee24[,2]
+resgee24$UL <- resgee24$Estimate + 2*resgee24[,2]
+
+
+
+ORs <- exp(resgee24 [, c(1,5,6)])
+colnames (ORs) <- c("Estimated_OR_W24", "95% CI LL",  "95% CI UL")
+kable(round(ORs,3))
+
+
+ 
+```
+
+Estimated proportions of new erosive joints with 95% confidence intervals:   
+
+```{r}
+
+library(emmeans)
+dfW24 <- as.data.frame(emmeans(gee24, specs= ~TREATMENT, type = "response"))
+kable (dfW24[ ,c("TREATMENT","prob", "asymp.LCL","asymp.UCL")], digits=4)
+dfW24$Time <- "Week 24"
+```
+
+# Baseline - week 48  
+
+
+
+```{r}
+analysis_subset_W48 <- AD_sec[!is.na (AD_sec$N_New_JE_W48) & !is.na(AD_sec$N_Possible_Progressor),]
+```
+
+```{r}
+#creating the complete dataset for week 24:
+
+nsubjects_P <- length(unique(analysis_subset_W48$ID[analysis_subset_W48$TREATMENT=="Placebo"]))
+nsubjects_D <- length(unique(analysis_subset_W48$ID[analysis_subset_W48$TREATMENT=="Denosumab"]))
+njoints_P <- sum(analysis_subset_W48$N_Possible_Progressor[analysis_subset_W48$TREATMENT=="Placebo"])
+njoints_D <- sum(analysis_subset_W48$N_Possible_Progressor[analysis_subset_W48$TREATMENT=="Denosumab"])
+```
+
+The number of different subjects in this dataset is `r nsubjects_P+nsubjects_D` (`r nsubjects_P` in the Placebo group and `r nsubjects_D` in the Denosumab group)
+
+The number of joints (possible progressors) in this dataset is  `r njoints_P` in the Placebo group and `r njoints_D` in the Denosumab group.
+
+## Visualization proportion by patient
+
+Visual presentation of proportions of new erosive joints by patient:  
+
+```{r}
+analysis_subset_W48 <- AD_sec[!is.na (AD_sec$N_New_JE_W48) & !is.na(AD_sec$N_Possible_Progressor),]
+```
+
+```{r}
+
+analysis_subset_W48 <- analysis_subset_W48 %>% mutate(propW48 = N_New_JE_W48 /N_Possible_Progressor)
+library(ggplot2)
+ggplot(analysis_subset_W48, aes(x=TREATMENT, y=propW48)) +geom_violin()+geom_point()
+  
+```
+
+
+
+
+
+
+
+## Grouped binomial logistic regression analysis  
+
+As a first analysis, a grouped binomial logistic regression analysis was applied based on the number of new erosive joints at week 48 by patient and the number of possible progressors by patient.  
+This analysis is based on the complete case dataset for week 48.
+
+
+
+```{r}
+#calculating variable N_Not_New_JE_W48 as N_Possible_Progressor - N_New_JE_W48
+analysis_subset_W48$N_Not_New_JE_W48 <- analysis_subset_W48$N_Possible_Progressor - analysis_subset_W48$N_New_JE_W48
+
+# fit GEE binomial
+logreg <- glm(formula = cbind (N_New_JE_W48,N_Not_New_JE_W48 ) ~ TREATMENT, data=analysis_subset_W48, family=binomial)
+
+res <- data.frame(summary(logreg)$coefficients)
+res$LL <- res$Estimate - 1.96*res[,2]
+res$UL <- res$Estimate + 1.96*res[,2]
+b <-round (summary(logreg)$coefficients, 4)
+
+
+ORs <- cbind(exp(res[, c(1,5,6)]), data.frame(summary(logreg)$coefficients[,4]))
+colnames (ORs) <- c("Estimated_OR_W48", "95% CI LL",  "95% CI LL", "p.value")
+kable(round(ORs,3))
+```
+
+From baseline to week 48, the estimated odds ratio for erosive progression is  `r ORs  [2,1]` (95% CI: `r ORs [2,2]` to `r ORs [2,3]`) for Denosumab compared to Placebo.  
+ 
+Thus the probability for erosive progression is significantly lower in the Denosumab group compared to the Placebo group (p = `r b [2,4]`).  
+
+Estimated proportions of new erosive joints with 95% confidence intervals:   
+
+```{r}
+library(emmeans)
+dfW48 <- as.data.frame(emmeans(logreg, specs= ~TREATMENT, type = "response"))
+kable (dfW48[ ,c("TREATMENT","prob", "asymp.LCL","asymp.UCL")], digits=4)
+dfW48$Time <- "Week 48"
+```
+
+## GEE logistic regression analysis week 48 (SAP)
+
+
+The data was restructured to long format. Example for week 48 for ID 1 and 3:  
+
+```{r}
+# putting the data in the long format
+analysis_subset_W48_1 <-analysis_subset_W48[analysis_subset_W48$N_New_JE_W48!=0, c("ID", "N_New_JE_W48", "TREATMENT")]
+analysis_subset_W48_1$New_JE_W48_dich <- 1
+analysis_subset_W48_1$Freq <- analysis_subset_W48_1$N_New_JE_W48
+
+
+analysis_subset_W48_0 <-analysis_subset_W48[analysis_subset_W48$N_Not_New_JE_W48!=0, c("ID", "N_Not_New_JE_W48", "TREATMENT")]
+analysis_subset_W48_0$New_JE_W48_dich<- 0
+analysis_subset_W48_0$Freq <- analysis_subset_W48_0$N_Not_New_JE_W48
+
+library(tidyverse)
+analysis_subset_W48_2 <- bind_rows(analysis_subset_W48_0 ,analysis_subset_W48_1 )
+analysis_subset_W48_2 <- analysis_subset_W48_2 %>% arrange (ID)
+analysis_subset_long_w48 <- analysis_subset_W48_2 %>%
+  rowwise() %>%
+  mutate(Freq = paste(seq(1, Freq), collapse = ",")) %>%
+  ungroup() %>%
+  separate_rows(Freq) %>%
+  select(ID, TREATMENT, New_JE_W48_dich)%>%
+  mutate(ID =as.factor(ID))
+
+kable(analysis_subset_long_w48 [analysis_subset_long_w48$ID %in% c(1,3),])
+```
+
+
+```{r}
+
+
+
+library(geepack)
+gee48 <- geeglm(formula= New_JE_W48_dich ~ TREATMENT, id=ID, data=analysis_subset_long_w48, family="binomial", corstr="exchangeable")
+
+resgee48 <- data.frame(summary(gee48)$coefficients)
+kable(resgee48, digits=4)
+resgee48$LL <- resgee48$Estimate - 2*resgee48[,2]
+resgee48$UL <- resgee48$Estimate + 2*resgee48[,2]
+
+
+
+ORs <- exp(resgee48 [, c(1,5,6)])
+colnames (ORs) <- c("Estimated_OR_W48", "95% CI LL",  "95% CI UL")
+kable(round(ORs,3))
+
+
+ 
+```
+
+Estimated proportions of new erosive joints with 95% confidence intervals:  
+
+```{r}
+
+library(emmeans)
+dfW48 <- as.data.frame(emmeans(gee48, specs= ~TREATMENT, type = "response"))
+kable (dfW48[ ,c("TREATMENT","prob", "asymp.LCL","asymp.UCL")], digits=4)
+dfW48$Time <- "Week 48"
+```
+
+# Extension phase  
+
+At week 48, the number of possible progressors was calculated as the difference between `N_Possible_Progressor` - `N_New_JE_W48`. The number of subjects in the dataset for which this number could be calculated is:
+
+```{r}
+AD_sec$N_Possible_Progressor_EF <- AD_sec$N_Possible_Progressor - AD_sec$N_New_JE_W48
+analysis_subset_EF  <- AD_sec[ !is.na(AD_sec$N_Possible_Progressor_EF ),]
+```
+
+```{r}
+#creating the complete dataset for week 24:
+
+nsubjects_P <- length(unique(analysis_subset_EF$ID[analysis_subset_EF$TREATMENT=="Placebo"]))
+nsubjects_D <- length(unique(analysis_subset_EF$ID[analysis_subset_EF$TREATMENT=="Denosumab"]))
+njoints_P <- sum(analysis_subset_EF$N_Possible_Progressor_EF [analysis_subset_EF$TREATMENT=="Placebo"])
+njoints_D <- sum(analysis_subset_EF$N_Possible_Progressor_EF [analysis_subset_EF$TREATMENT=="Denosumab"])
+```
+
+The number of subjects in the dataset for which this number could be calculated is `r nsubjects_P+nsubjects_D` (`r nsubjects_P` in the Placebo group and `r nsubjects_D` in the Denosumab group)
+
+The number of joints (possible progressors) in this dataset is  `r njoints_P` in the Placebo group and `r njoints_D` in the Denosumab group.
+
+## Week 48 - Week 72   
+
+
+
+
+```{r}
+analysis_subset_W48W72 <- AD_sec[!is.na (AD_sec$N_New_JE_W48W72) & !is.na(AD_sec$N_Possible_Progressor_EF ),]
+```
+
+```{r}
+#creating the complete dataset for week 24:
+
+nsubjects_P <- length(unique(analysis_subset_W48W72$ID[analysis_subset_W48W72$TREATMENT=="Placebo"]))
+nsubjects_D <- length(unique(analysis_subset_W48W72$ID[analysis_subset_W48W72$TREATMENT=="Denosumab"]))
+njoints_P <- sum(analysis_subset_W48W72$N_Possible_Progressor_EF [analysis_subset_W48W72$TREATMENT=="Placebo"])
+njoints_D <- sum(analysis_subset_W48W72$N_Possible_Progressor_EF [analysis_subset_W48W72$TREATMENT=="Denosumab"])
+```
+
+
+The number of different subjects with data at week 72 in this dataset is `r nsubjects_P+nsubjects_D` (`r nsubjects_P` in the Placebo group and `r nsubjects_D` in the Denosumab group)
+
+The number of joints (possible progressors) in this dataset is  `r njoints_P` in the Placebo group and `r njoints_D` in the Denosumab group.
+
+
+## GEE logistic regression analysis  Week 48 - Week 72  
+
+
+```{r}
+
+analysis_subset_W48W72 $N_Not_New_JE_W48W72 <-  analysis_subset_W48W72$N_Possible_Progressor_EF  -analysis_subset_W48W72$N_New_JE_W48W72
+```
+
+The data was restructured to long format. 
+
+```{r}
+# putting the data in the long format
+analysis_subset_W48W72_1 <-analysis_subset_W48W72[analysis_subset_W48W72$N_New_JE_W48W72!=0, c("ID", "N_New_JE_W48W72", "TREATMENT")]
+analysis_subset_W48W72_1$New_JE_W48W72_dich <- 1
+analysis_subset_W48W72_1$Freq <- analysis_subset_W48W72_1$N_New_JE_W48W72
+
+
+analysis_subset_W48W72_0 <-analysis_subset_W48W72[analysis_subset_W48W72$N_Not_New_JE_W48W72!=0, c("ID", "N_Not_New_JE_W48W72", "TREATMENT")]
+analysis_subset_W48W72_0$New_JE_W48W72_dich<- 0
+analysis_subset_W48W72_0$Freq <- analysis_subset_W48W72_0$N_Not_New_JE_W48W72
+
+library(tidyverse)
+analysis_subset_W48W72_2 <- bind_rows(analysis_subset_W48W72_0 ,analysis_subset_W48W72_1 )
+analysis_subset_W48W72_2 <- analysis_subset_W48W72_2 %>% arrange (ID)
+analysis_subset_long_W48W72 <- analysis_subset_W48W72_2 %>%
+  rowwise() %>%
+  mutate(Freq = paste(seq(1, Freq), collapse = ",")) %>%
+  ungroup() %>%
+  separate_rows(Freq) %>%
+  select(ID, TREATMENT, New_JE_W48W72_dich)%>%
+  mutate(ID =as.factor(ID))
+
+```
+
+
+```{r}
+
+
+
+library(geepack)
+gee4872 <- geeglm(formula= New_JE_W48W72_dich ~ TREATMENT, id=ID, data=analysis_subset_long_W48W72, family="binomial", corstr="exchangeable")
+
+resgee4872 <- data.frame(summary(gee4872)$coefficients)
+kable(resgee4872 , digits=4)
+resgee4872$LL <- resgee4872$Estimate - 2*resgee4872[,2]
+resgee4872$UL <- resgee4872$Estimate + 2*resgee4872[,2]
+
+
+
+ORs <- exp(resgee4872 [, c(1,5,6)])
+colnames (ORs) <- c("Estimated_OR_W48W72", "95% CI LL",  "95% CI UL")
+kable(round(ORs,3))
+
+
+ 
+```
+
+Estimated proportions of new erosive joints with 95% confidence intervals:   
+
+```{r}
+
+library(emmeans)
+dfW48W72 <- as.data.frame(emmeans(gee4872, specs= ~TREATMENT, type = "response"))
+kable (dfW48W72[ ,c("TREATMENT","prob", "asymp.LCL","asymp.UCL")], digits=4)
+dfW48W72$Time <- "Week 48 to 72"
+
+```
+
+
+
+## Week 48 - Week 96  
+
+```{r}
+analysis_subset_W48W96 <- AD_sec[!is.na (AD_sec$N_New_JE_W48W96) & !is.na(AD_sec$N_Possible_Progressor_EF ),]
+```
+
+```{r}
+#creating the complete dataset for week 24:
+
+nsubjects_P <- length(unique(analysis_subset_W48W96$ID[analysis_subset_W48W96$TREATMENT=="Placebo"]))
+nsubjects_D <- length(unique(analysis_subset_W48W96$ID[analysis_subset_W48W96$TREATMENT=="Denosumab"]))
+njoints_P <- sum(analysis_subset_W48W96$N_Possible_Progressor_EF [analysis_subset_W48W96$TREATMENT=="Placebo"])
+njoints_D <- sum(analysis_subset_W48W96$N_Possible_Progressor_EF [analysis_subset_W48W96$TREATMENT=="Denosumab"])
+```
+
+
+The number of different subjects in this dataset is `r nsubjects_P+nsubjects_D` (`r nsubjects_P` in the Placebo group and `r nsubjects_D` in the Denosumab group)
+
+The number of joints (possible progressors) in this dataset is  `r njoints_P` in the Placebo group and `r njoints_D` in the Denosumab group.
+
+
+## GEE logistic regression analysis  Week 48 - Week 96 
+
+
+
+
+```{r}
+
+analysis_subset_W48W96 $N_Not_New_JE_W48W96 <-  analysis_subset_W48W96$N_Possible_Progressor_EF  -analysis_subset_W48W96$N_New_JE_W48W96
+```
+
+The data was restructured to long format. 
+
+```{r}
+# putting the data in the long format
+analysis_subset_W48W96_1 <-analysis_subset_W48W96[analysis_subset_W48W96$N_New_JE_W48W96!=0, c("ID", "N_New_JE_W48W96", "TREATMENT")]
+analysis_subset_W48W96_1$New_JE_W48W96_dich <- 1
+analysis_subset_W48W96_1$Freq <- analysis_subset_W48W96_1$N_New_JE_W48W96
+
+
+analysis_subset_W48W96_0 <-analysis_subset_W48W96[analysis_subset_W48W96$N_Not_New_JE_W48W96!=0, c("ID", "N_Not_New_JE_W48W96", "TREATMENT")]
+analysis_subset_W48W96_0$New_JE_W48W96_dich<- 0
+analysis_subset_W48W96_0$Freq <- analysis_subset_W48W96_0$N_Not_New_JE_W48W96
+
+library(tidyverse)
+analysis_subset_W48W96_2 <- bind_rows(analysis_subset_W48W96_0 ,analysis_subset_W48W96_1 )
+analysis_subset_W48W96_2 <- analysis_subset_W48W96_2 %>% arrange (ID)
+analysis_subset_long_W48W96 <- analysis_subset_W48W96_2 %>%
+  rowwise() %>%
+  mutate(Freq = paste(seq(1, Freq), collapse = ",")) %>%
+  ungroup() %>%
+  separate_rows(Freq) %>%
+  select(ID, TREATMENT, New_JE_W48W96_dich)%>%
+  mutate(ID =as.factor(ID))
+
+```
+
+
+```{r}
+
+
+
+library(geepack)
+gee7296 <- geeglm(formula= New_JE_W48W96_dich ~ TREATMENT, id=ID, data=analysis_subset_long_W48W96, family="binomial", corstr="exchangeable")
+
+resgee7296 <- data.frame(summary(gee7296)$coefficients)
+kable(resgee7296 , digits=4)
+resgee7296$LL <- resgee7296$Estimate - 2*resgee7296[,2]
+resgee7296$UL <- resgee7296$Estimate + 2*resgee7296[,2]
+
+
+
+ORs <- exp(resgee7296 [, c(1,5,6)])
+colnames (ORs) <- c("Estimated_OR_W48W96", "95% CI LL",  "95% CI UL")
+kable(round(ORs,3))
+
+
+ 
+```
+
+Estimated proportions of new erosive joints with 95% confidence intervals:   
+
+```{r}
+
+library(emmeans)
+dfW48W96 <- as.data.frame(emmeans(gee7296, specs= ~TREATMENT, type = "response"))
+kable (dfW48W96[ ,c("TREATMENT","prob", "asymp.LCL","asymp.UCL")], digits=4)
+dfW48W96$Time <- "Week 48 to 96"
+
+```
+
+# Summary of results  
+
+The estimated proportions obtained with GEE logistic regression and the corresponding 95% confidence intervals were combined and plotted:
+
+```{r}
+CI_prop <- rbind(dfW24 ,dfW48, dfW48W72,dfW48W96)[, c("TREATMENT","prob", "asymp.LCL","asymp.UCL" ,"Time" )]
+kable(CI_prop)
+CI_prop$TREATMENT <- as.character (CI_prop$TREATMENT )
+CI_prop $TREATMENT[CI_prop$TREATMENT=="Placebo" & (CI_prop$Time == "Week 48 to 72" | CI_prop$Time == "Week 48 to 96")] <- "Placebo with switch \nto denosumab"
+CI_prop$Estimated_prob <- 100*CI_prop$prob
+kable(CI_prop)
+```
+
+```{r}
+
+cols <- c("Denosumab"="#CC3333", "Placebo"= "#6495ED", "Placebo with switch \nto denosumab"="grey")
+
+```
+
+
+Barplot with error bars:  
+
+
+
+```{r, fig.cap="Barplot with 95% confidence intervals of the estimated percentages of new erosive joints of potential pre-erosive joints (i.e., N, S, J). Week 72 and 96 data originate from post-hoc analyses of the open-label extension phase: similar GEE logistic regression models were used with treatment groups based on the initial randomization code."}
+ggplot(CI_prop, aes(x=Time, fill=TREATMENT, y=Estimated_prob))+
+  geom_bar(stat="identity", position=position_dodge())+
+  geom_errorbar( ymin=100*CI_prop$asymp.LCL, ymax=100*CI_prop$asymp.UCL, width=0.2, position=position_dodge(width =0.9))+
+  scale_y_continuous(limits= c(0, 100*max(CI_prop$asymp.UCL)	))+
+  scale_fill_manual(values=cols)+
+  labs(x="", y="Estimated proportion (%)", fill="Treatment")+
+  theme_bw()
+
+
+ ggsave("Output/secondary_barplot_errorbars.pdf", scale=1.5, dpi=500, width=14, height=9, units="cm")
+```
+
+CI-plot:
+
+```{r,  fig.cap="95% confidence intervals of the estimated percentages of new erosive joints of potential pre-erosive joints (i.e., N, S, J). Week 72 and 96 data originate from post-hoc analyses of the open-label extension phase: similar GEE logistic regression models were used with treatment groups based on the initial randomization code."}
+
+ggplot(CI_prop, aes(x=Time, fill=TREATMENT, y=Estimated_prob))+
+  
+   geom_errorbar( ymin=100*CI_prop$asymp.LCL, ymax=100*CI_prop$asymp.UCL, width=0.2, position=position_dodge(width =0.3))+
+  geom_point(shape=21, position=position_dodge(width =0.3), size=2.5)+
+  scale_y_continuous(limits= c(0, 100*max(CI_prop$asymp.UCL)	))+
+  scale_fill_manual(values=cols)+
+  labs(x="", y="Estimated proportion (%)", fill="Treatment")+
+  theme_bw()
+
+ ggsave("Output/secondary_ciplot.pdf", scale=1.5, dpi=500, width=14, height=9, units="cm")
+```
+
+
+Plot without error bars:  
+
+```{r, fig.cap="Barplot of the estimated percentages of new erosive joints of potential pre-erosive joints (i.e., N, S, J). Week 72 and 96 data originate from post-hoc analyses of the open-label extension phase: similar GEE logistic regression models were used with treatment groups based on the initial randomization code."}
+
+ggplot(CI_prop, aes(x=Time, fill=TREATMENT, y=Estimated_prob))+
+  geom_bar(stat="identity", position=position_dodge())+
+  scale_y_continuous(limits= c(0, 100*max(CI_prop$asymp.UCL)	))+
+  scale_fill_manual(values=cols)+
+  labs(x="", y="Estimated proportion (%)", fill="Treatment")+
+  theme_bw()
+ ggsave("Output/secondary_barplot.pdf", scale=1.5, dpi=500, width=14, height=9, units="cm")
+```
